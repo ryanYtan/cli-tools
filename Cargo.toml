@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = [
+    "src/colsof",
+    "src/epubc",
+    "src/guid",
+    "src/mapit",
+    "src/pathsize",
+    "src/textsplit",
+    "src/urandom",
+    "src/zargs",
+]
+
+[workspace.package]
+edition = "2024"
+version = "0.1.0"

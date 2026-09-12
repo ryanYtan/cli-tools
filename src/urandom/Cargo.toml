@@ -1,0 +1,8 @@
+[package]
+name = "urandom"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+getrandom = "0.4"

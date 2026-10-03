@@ -68,9 +68,8 @@ Splits text into lines based on a delimiter
 
 Options:
   -d, --delimiter <DELIMITER>  Delimiter to split on [default: ,]
-  -n, --ignore-empty           Ignore empty lines
-  -w, --no-empty-write         Do not write empty lines
-  -t, --trim                   Trim whitespace from lines
+  -n, --ignore-empty           Do not write empty lines
+  -T, --no-trim                Do not trim whitespace from lines
   -h, --help                   Print help
 ```
 

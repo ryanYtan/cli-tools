@@ -152,3 +152,33 @@ Options:
   -f, --default-value <DEFAULT_VALUE>  Default value to use for empty cells [default: <EMPTY>]
   -h, --help                           Print help
 ```
+
+## `dtail`
+Tails logs from all running Docker containers matching any pattern - like
+[`kubetail`](https://github.com/johanhaleby/kubetail), but for local Docker.
+Each line is prefixed with a coloured, aligned label. Compose containers are
+labelled (and matched) by service name, e.g. `kyberlifeorder` rather than
+`myproject-kyberlifeorder-1`. It keeps watching for containers that start,
+restart or are recreated later: new ones are tailed from their first line, and
+restarted ones carry on where they stopped. Uses the `docker` CLI, so the
+active Docker context is respected.
+```
+usage: dtail [OPTIONS] [PATTERNS]...
+
+Tails logs from all running Docker containers matching any pattern, like kubetail
+
+Arguments:
+  [PATTERNS]...  Regexes to match containers against (any match is tailed)
+
+Options:
+  -s, --since <SINCE>        Show logs since a time or duration (e.g. 10m, 1h, 2026-10-08T09:00); overrides --tail
+  -n, --tail <TAIL>          Lines of history to show per container at startup [default: 10]
+  -t, --timestamps           Show Docker timestamps
+  -x, --exclude <EXCLUDE>    Skip containers matching this regex (repeatable)
+  -g, --grep <GREP>          Only print lines matching this regex (case-insensitive)
+  -1, --no-watch             Don't watch for new, restarted, or recreated containers; exit when all logs end
+  -f, --full-names           Use full container names (for prefix and matching), not compose service names
+      --interval <INTERVAL>  Seconds between checks for new containers [default: 2]
+  -h, --help                 Print help
+```
+Example: `dtail order iam`, `dtail -x elastic -s 5m`, or `dtail -g 'error|exception'`.

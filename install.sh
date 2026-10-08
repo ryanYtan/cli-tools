@@ -6,7 +6,7 @@
 
 set -euo pipefail
 
-TOOLS=(colsof epubc guid mapit pathsize textsplit urandom zargs)
+TOOLS=(colsof dtail epubc guid mapit pathsize textsplit urandom zargs)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
 INSTALL_DIR="/usr/local/bin"
 

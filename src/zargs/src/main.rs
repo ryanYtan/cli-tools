@@ -1,5 +1,5 @@
 use std::io::{self, BufRead};
-use std::process::Command;
+use std::process::{Command, ExitCode};
 
 use clap::Parser;
 
@@ -18,125 +18,45 @@ impl Token {
     }
 }
 
-/// A minimal cursor over a string's characters, mirroring the reference
-/// implementation's `Stream` helper used to hand-roll the `{n}` parser.
-struct Stream {
-    chars: Vec<char>,
-    i: isize,
-}
-
-impl Stream {
-    fn new(s: &str) -> Self {
-        Self {
-            chars: s.chars().collect(),
-            i: 0,
-        }
-    }
-
-    fn look(&self, offset: isize) -> Option<char> {
-        let t = self.i + offset;
-        if t < 0 || t as usize >= self.chars.len() {
-            None
-        } else {
-            Some(self.chars[t as usize])
-        }
-    }
-
-    fn consume(&mut self, n: isize) {
-        self.i += n;
-        if self.i > self.chars.len() as isize {
-            self.i = self.chars.len() as isize;
-        }
-        if self.i < 0 {
-            self.i = -1;
-        }
-    }
-
-    fn is_at_end(&self) -> bool {
-        self.i < 0 || self.i as usize >= self.chars.len()
-    }
-
-    fn pos(&self) -> isize {
-        self.i
-    }
-
-    fn skip_spaces(&mut self) -> usize {
-        let mut skipped = 0;
-        while let Some(c) = self.look(0) {
-            if !c.is_whitespace() {
-                break;
-            }
-            skipped += 1;
-            self.consume(1);
-        }
-        skipped
-    }
-}
-
 /// Parses a command-template argument into literal and `{n}` positional
 /// tokens. `{{` and `}}` escape to literal braces.
 fn parse_fmt(s: &str) -> Result<Vec<Token>, String> {
+    let chars: Vec<char> = s.chars().collect();
     let mut tokens = Vec::new();
-    let mut st = Stream::new(s);
+    let mut literal = String::new();
+    let mut i = 0;
 
-    while !st.is_at_end() {
-        let skipped = st.skip_spaces();
-        if skipped > 0 {
-            tokens.push(Token::Literal(" ".repeat(skipped)));
-        } else if st.look(0) == Some('{') && st.look(1) != Some('{') {
-            st.consume(1);
-            if st.is_at_end() {
-                return Err(format!("Expected '}}' in {s} at position {}", st.pos()));
+    while i < chars.len() {
+        match chars[i] {
+            c @ ('{' | '}') if chars.get(i + 1) == Some(&c) => {
+                literal.push(c);
+                i += 2;
             }
-            let mut pos_str = String::new();
-            while let Some(c) = st.look(0) {
-                if c.is_ascii_digit() {
-                    pos_str.push(c);
-                    st.consume(1);
-                } else {
-                    break;
+            '{' => {
+                if !literal.is_empty() {
+                    tokens.push(Token::Literal(std::mem::take(&mut literal)));
                 }
-            }
-            if st.look(0) != Some('}') {
-                return Err(format!("Expected '}}' in {s} at position {}", st.pos()));
-            }
-            st.consume(1);
-            let pos: usize = pos_str
-                .parse()
-                .map_err(|_| format!("Expected a positional index in {{}} in {s}"))?;
-            tokens.push(Token::Positional(pos));
-        } else if st.look(0) == Some('}') {
-            st.consume(1);
-            if st.look(0) == Some('}') {
-                st.consume(1);
-                tokens.push(Token::Literal("}".to_string()));
-            } else {
-                return Err(format!("Unexpected '}}' in {s} at position {}", st.pos()));
-            }
-        } else {
-            let mut curr = String::new();
-            while !st.is_at_end() {
-                if st.look(0) == Some('{') {
-                    if st.look(1) == Some('{') {
-                        curr.push('{');
-                        st.consume(2);
-                    } else {
-                        break;
-                    }
-                } else if st.look(0) == Some('}') {
-                    if st.look(1) == Some('}') {
-                        curr.push('}');
-                        st.consume(2);
-                    } else {
-                        return Err(format!("Unexpected '}}' in {s} at position {}", st.pos()));
-                    }
-                } else {
-                    curr.push(st.look(0).unwrap());
-                    st.consume(1);
+                let start = i + 1;
+                let digits = chars[start..].iter().take_while(|c| c.is_ascii_digit()).count();
+                let end = start + digits;
+                if chars.get(end) != Some(&'}') {
+                    return Err(format!("Expected '}}' in {s} at position {end}"));
                 }
+                let pos = String::from_iter(&chars[start..end])
+                    .parse()
+                    .map_err(|_| format!("Expected a positional index in {{}} in {s}"))?;
+                tokens.push(Token::Positional(pos));
+                i = end + 1;
             }
-            tokens.push(Token::Literal(curr));
+            '}' => return Err(format!("Unexpected '}}' in {s} at position {i}")),
+            c => {
+                literal.push(c);
+                i += 1;
+            }
         }
+    }
+    if !literal.is_empty() {
+        tokens.push(Token::Literal(literal));
     }
 
     Ok(tokens)
@@ -154,23 +74,21 @@ struct Args {
     command: Vec<String>,
 }
 
-fn main() {
+fn main() -> ExitCode {
+    common::run(env!("CARGO_PKG_NAME"), run)
+}
+
+fn run() -> common::Result {
     let args = Args::parse();
 
     let formatter: Vec<Vec<Token>> = args
         .command
         .iter()
-        .map(|c| {
-            parse_fmt(c).unwrap_or_else(|e| {
-                eprintln!("{e}");
-                std::process::exit(1);
-            })
-        })
-        .collect();
+        .map(|c| parse_fmt(c))
+        .collect::<Result<_, _>>()?;
 
-    let stdin = io::stdin();
-    for line in stdin.lock().lines() {
-        let line = line.expect("failed to read from stdin");
+    for line in io::stdin().lock().lines() {
+        let line = line.map_err(|e| format!("failed to read from stdin: {e}"))?;
         let parts: Vec<String> = line.split(' ').map(|s| s.to_string()).collect();
 
         let cmd: Vec<String> = formatter
@@ -182,11 +100,12 @@ fn main() {
             continue;
         }
 
-        if let Err(e) = Command::new(&cmd[0]).args(&cmd[1..]).status() {
-            eprintln!("failed to run {cmd:?}: {e}");
-            std::process::exit(1);
-        }
+        Command::new(&cmd[0])
+            .args(&cmd[1..])
+            .status()
+            .map_err(|e| format!("failed to run {cmd:?}: {e}"))?;
     }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -236,6 +155,17 @@ mod tests {
     #[test]
     fn whitespace_runs_are_preserved() {
         assert_eq!(render("a   b", &[]), Ok("a   b".to_string()));
+    }
+
+    #[test]
+    fn other_whitespace_is_preserved() {
+        assert_eq!(render("a\t{0}\n", &["x"]), Ok("a\tx\n".to_string()));
+    }
+
+    #[test]
+    fn braces_pair_up_left_to_right() {
+        assert_eq!(render("{{{0}}}", &["a"]), Ok("{a}".to_string()));
+        assert_eq!(render("{0}}}", &["a"]), Ok("a}".to_string()));
     }
 
     #[test]

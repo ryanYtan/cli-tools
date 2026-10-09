@@ -223,7 +223,13 @@ version = "0.1.0"
 dependencies = [
  "calamine",
  "clap",
+ "common",
+ "testutil",
 ]
+
+[[package]]
+name = "common"
+version = "0.1.0"
 
 [[package]]
 name = "core_detect"
@@ -299,8 +305,10 @@ name = "epubc"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
  "image",
  "tempfile",
+ "testutil",
  "zip",
 ]
 
@@ -392,6 +400,8 @@ name = "guid"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
+ "testutil",
  "uuid",
 ]
 
@@ -472,7 +482,9 @@ name = "mapit"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
  "tempfile",
+ "testutil",
 ]
 
 [[package]]
@@ -591,7 +603,9 @@ name = "pathsize"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
  "tempfile",
+ "testutil",
 ]
 
 [[package]]
@@ -785,10 +799,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "testutil"
+version = "0.1.0"
+
+[[package]]
 name = "textsplit"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
+ "testutil",
 ]
 
 [[package]]
@@ -808,7 +828,9 @@ name = "urandom"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
  "getrandom",
+ "testutil",
 ]
 
 [[package]]
@@ -893,6 +915,8 @@ name = "zargs"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "common",
+ "testutil",
 ]
 
 [[package]]

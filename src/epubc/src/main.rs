@@ -1,6 +1,8 @@
+use std::borrow::Cow;
 use std::fs;
 use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use clap::Parser;
 use image::codecs::jpeg::JpegEncoder;
@@ -42,6 +44,7 @@ struct Args {
 enum Kind {
     Jpeg,
     Png,
+    /// Anything that is written back out as it was read.
     Fixed,
 }
 
@@ -51,48 +54,45 @@ struct Entry {
     data: Vec<u8>,
     options: SimpleFileOptions,
     compressed_size: u64,
+    kind: Kind,
 }
 
 fn parse_target_size(s: &str, current_size: u64) -> Result<u64, String> {
-    let trimmed = s.trim();
+    // Two-letter suffixes first, so "KB" isn't read as a number ending in "B".
+    const UNITS: [(&str, u64); 9] = [
+        ("TB", 1 << 40),
+        ("GB", 1 << 30),
+        ("MB", 1 << 20),
+        ("KB", 1 << 10),
+        ("T", 1 << 40),
+        ("G", 1 << 30),
+        ("M", 1 << 20),
+        ("K", 1 << 10),
+        ("B", 1),
+    ];
 
-    if let Some(pct) = trimmed.strip_suffix('%') {
-        let pct: f64 = pct
+    let parse_number = |num: &str| -> Result<f64, String> {
+        let value: f64 = num
             .trim()
             .parse()
             .map_err(|_| format!("invalid target size: {s}"))?;
-        if pct < 0.0 {
+        if value < 0.0 {
             return Err(format!("target size cannot be negative: {s}"));
         }
-        return Ok((current_size as f64 * pct / 100.0).round() as u64);
+        Ok(value)
+    };
+
+    let trimmed = s.trim();
+    if let Some(pct) = trimmed.strip_suffix('%') {
+        return Ok((current_size as f64 * parse_number(pct)? / 100.0).round() as u64);
     }
 
     let upper = trimmed.to_ascii_uppercase();
-    let (num_part, unit_bytes): (&str, u64) = if let Some(p) = upper
-        .strip_suffix("TB")
-        .or_else(|| upper.strip_suffix('T'))
-    {
-        (p, 1u64 << 40)
-    } else if let Some(p) = upper.strip_suffix("GB").or_else(|| upper.strip_suffix('G')) {
-        (p, 1u64 << 30)
-    } else if let Some(p) = upper.strip_suffix("MB").or_else(|| upper.strip_suffix('M')) {
-        (p, 1u64 << 20)
-    } else if let Some(p) = upper.strip_suffix("KB").or_else(|| upper.strip_suffix('K')) {
-        (p, 1u64 << 10)
-    } else if let Some(p) = upper.strip_suffix('B') {
-        (p, 1)
-    } else {
-        (upper.as_str(), 1)
-    };
-
-    let value: f64 = num_part
-        .trim()
-        .parse()
-        .map_err(|_| format!("invalid target size: {s}"))?;
-    if value < 0.0 {
-        return Err(format!("target size cannot be negative: {s}"));
-    }
-    Ok((value * unit_bytes as f64).round() as u64)
+    let (num_part, unit_bytes) = UNITS
+        .iter()
+        .find_map(|(suffix, bytes)| Some((upper.strip_suffix(suffix)?, *bytes)))
+        .unwrap_or((upper.as_str(), 1));
+    Ok((parse_number(num_part)? * unit_bytes as f64).round() as u64)
 }
 
 fn default_output_path(input: &Path) -> PathBuf {
@@ -107,24 +107,24 @@ fn default_output_path(input: &Path) -> PathBuf {
     }
 }
 
-fn encode_jpeg(img: &DynamicImage, quality: u8) -> Vec<u8> {
+fn encode_jpeg(img: &DynamicImage, quality: u8) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
     JpegEncoder::new_with_quality(&mut buf, quality)
         .encode_image(img)
-        .expect("failed to encode jpeg");
-    buf
+        .map_err(|e| format!("failed to encode jpeg: {e}"))?;
+    Ok(buf)
 }
 
-fn encode_png(img: &DynamicImage) -> Vec<u8> {
+fn encode_png(img: &DynamicImage) -> Result<Vec<u8>, String> {
     let mut buf = Vec::new();
     img.write_to(&mut Cursor::new(&mut buf), ImageFormat::Png)
-        .expect("failed to encode png");
-    buf
+        .map_err(|e| format!("failed to encode png: {e}"))?;
+    Ok(buf)
 }
 
 /// Shrinks a JPEG to fit within `target` bytes: first by lowering quality,
 /// then - if quality alone can't get there - by also downscaling.
-fn shrink_jpeg(img: &DynamicImage, target: usize) -> Vec<u8> {
+fn shrink_jpeg(img: &DynamicImage, target: usize) -> Result<Vec<u8>, String> {
     const MIN_QUALITY: u8 = 10;
     const MAX_QUALITY: u8 = 92;
     const MIN_LONG_SIDE: u32 = 320;
@@ -133,14 +133,14 @@ fn shrink_jpeg(img: &DynamicImage, target: usize) -> Vec<u8> {
     let mut current = img.clone();
 
     for _ in 0..MAX_RESIZE_ATTEMPTS {
-        let floor = encode_jpeg(&current, MIN_QUALITY);
+        let floor = encode_jpeg(&current, MIN_QUALITY)?;
         if floor.len() <= target {
             let mut lo = MIN_QUALITY;
             let mut hi = MAX_QUALITY;
             let mut best = floor;
             while lo < hi {
                 let mid = lo + (hi - lo).div_ceil(2);
-                let candidate = encode_jpeg(&current, mid);
+                let candidate = encode_jpeg(&current, mid)?;
                 if candidate.len() <= target {
                     best = candidate;
                     lo = mid;
@@ -148,12 +148,12 @@ fn shrink_jpeg(img: &DynamicImage, target: usize) -> Vec<u8> {
                     hi = mid - 1;
                 }
             }
-            return best;
+            return Ok(best);
         }
 
         let (w, h) = current.dimensions();
         if w.max(h) <= MIN_LONG_SIDE {
-            return floor;
+            return Ok(floor);
         }
 
         // JPEG size at a fixed quality scales roughly with pixel count, so
@@ -175,17 +175,17 @@ fn shrink_jpeg(img: &DynamicImage, target: usize) -> Vec<u8> {
 /// heavily on image content (flat art can compress unpredictably as detail
 /// aliases away), so this binary-searches the scale factor against the
 /// real encoded size at each step rather than guessing from pixel counts.
-fn shrink_png(img: &DynamicImage, target: usize) -> Vec<u8> {
+fn shrink_png(img: &DynamicImage, target: usize) -> Result<Vec<u8>, String> {
     const MIN_SCALE: f64 = 0.02;
     const ITERATIONS: u32 = 12;
 
-    let full = encode_png(img);
+    let full = encode_png(img)?;
     if full.len() <= target {
-        return full;
+        return Ok(full);
     }
 
     let (w0, h0) = img.dimensions();
-    let scaled_encode = |scale: f64| -> Vec<u8> {
+    let scaled_encode = |scale: f64| {
         let w = ((w0 as f64 * scale).round() as u32).max(1);
         let h = ((h0 as f64 * scale).round() as u32).max(1);
         encode_png(&img.resize(w, h, FilterType::Lanczos3))
@@ -194,16 +194,16 @@ fn shrink_png(img: &DynamicImage, target: usize) -> Vec<u8> {
     // Assume encoded size is (roughly) monotonic in scale: establish a
     // floor that satisfies the target before binary-searching upward from
     // it for the largest scale that still fits.
-    let mut best = scaled_encode(MIN_SCALE);
+    let mut best = scaled_encode(MIN_SCALE)?;
     if best.len() > target {
-        return best; // can't do better even at the smallest allowed size
+        return Ok(best); // can't do better even at the smallest allowed size
     }
 
     let mut lo = MIN_SCALE;
     let mut hi = 1.0;
     for _ in 0..ITERATIONS {
         let mid = (lo + hi) / 2.0;
-        let candidate = scaled_encode(mid);
+        let candidate = scaled_encode(mid)?;
         if candidate.len() <= target {
             best = candidate;
             lo = mid;
@@ -212,47 +212,175 @@ fn shrink_png(img: &DynamicImage, target: usize) -> Vec<u8> {
         }
     }
 
-    best
+    Ok(best)
 }
 
-fn classify(data: &[u8]) -> (Kind, Option<DynamicImage>) {
-    let format = match image::guess_format(data) {
-        Ok(f) => f,
-        Err(_) => return (Kind::Fixed, None),
-    };
-
-    let kind = match format {
-        ImageFormat::Jpeg => Kind::Jpeg,
-        ImageFormat::Png => Kind::Png,
-        _ => return (Kind::Fixed, None),
-    };
-
-    match image::load_from_memory(data) {
-        Ok(img) => (kind, Some(img)),
-        Err(_) => (Kind::Fixed, None),
+fn kind_of(data: &[u8]) -> Kind {
+    match image::guess_format(data) {
+        Ok(ImageFormat::Jpeg) => Kind::Jpeg,
+        Ok(ImageFormat::Png) => Kind::Png,
+        _ => Kind::Fixed,
     }
 }
 
-/// Exits quietly when stdout is closed early (e.g. `epubc | head`).
-fn write_failed(e: io::Error) -> ! {
-    if e.kind() == io::ErrorKind::BrokenPipe {
-        std::process::exit(0);
+fn read_entries(input: &Path) -> Result<Vec<Entry>, String> {
+    let file =
+        fs::File::open(input).map_err(|e| format!("failed to open {}: {e}", input.display()))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|e| format!("failed to read {} as an epub: {e}", input.display()))?;
+
+    let mut entries = Vec::with_capacity(archive.len());
+    for i in 0..archive.len() {
+        let mut zf = archive
+            .by_index(i)
+            .map_err(|e| format!("failed to read entry {i}: {e}"))?;
+        let name = zf.name().to_string();
+        let is_dir = zf.is_dir();
+        let mut data = Vec::new();
+        if !is_dir {
+            zf.read_to_end(&mut data)
+                .map_err(|e| format!("failed to read {name}: {e}"))?;
+        }
+        entries.push(Entry {
+            kind: kind_of(&data),
+            name,
+            is_dir,
+            data,
+            options: zf.options(),
+            compressed_size: zf.compressed_size(),
+        });
     }
-    eprintln!("failed to write to stdout: {e}");
-    std::process::exit(1);
+    Ok(entries)
 }
 
-fn main() {
+/// The fraction of its current size each image has to shrink to for the
+/// whole file to land on `target_bytes`.
+///
+/// `compressed_size` is what the *original* entries contribute to the
+/// current file size, so it's used to work out how many bytes are spent
+/// on things we won't touch. But once crushed, images are written back
+/// out uncompressed (see `write_entries`), so their contribution to the
+/// *new* file size is their raw byte length - that's the right basis for
+/// sizing each image's target, not their incidental original zip
+/// compression (which can vary a lot and has nothing to do with how
+/// shrinkable the image itself is).
+fn image_ratio(entries: &[Entry], current_size: u64, target_bytes: u64) -> f64 {
+    let images = || entries.iter().filter(|e| e.kind != Kind::Fixed);
+    let compressed_total: u64 = images().map(|e| e.compressed_size).sum();
+    let raw_total: u64 = images().map(|e| e.data.len() as u64).sum();
+    if raw_total == 0 {
+        return 1.0;
+    }
+
+    let fixed_total = current_size.saturating_sub(compressed_total);
+    let target_for_images = target_bytes.saturating_sub(fixed_total);
+    (target_for_images as f64 / raw_total as f64).clamp(0.02, 1.0)
+}
+
+/// Returns the bytes to write for `entry`: its image shrunk by `ratio`, or
+/// its data as it is if there's nothing to gain.
+fn crush(entry: &Entry, ratio: f64) -> Result<Cow<'_, [u8]>, String> {
+    // Below this, an image is already small enough that squeezing it
+    // further barely moves the total file size while risking visibly
+    // wrecking small icons/decorations - so just leave it alone.
+    const MIN_TARGET_BYTES: usize = 16 * 1024;
+
+    let original = Cow::Borrowed(entry.data.as_slice());
+    let shrink = match entry.kind {
+        Kind::Jpeg => shrink_jpeg,
+        Kind::Png => shrink_png,
+        Kind::Fixed => return Ok(original),
+    };
+    let target = ((entry.data.len() as f64 * ratio).round() as usize).max(MIN_TARGET_BYTES);
+    if ratio >= 0.98 || target >= entry.data.len() {
+        return Ok(original);
+    }
+
+    // Decoded here rather than up front, so only one image is held in
+    // memory at a time.
+    match image::load_from_memory(&entry.data) {
+        Ok(img) => Ok(Cow::Owned(shrink(&img, target)?)),
+        Err(_) => Ok(original),
+    }
+}
+
+fn write_entries(entries: &[Entry], ratio: f64, file: fs::File) -> Result<(), String> {
+    let mut writer = ZipWriter::new(file);
+
+    for entry in entries {
+        if entry.is_dir {
+            writer
+                .add_directory(&entry.name, entry.options)
+                .map_err(|e| format!("failed to write directory {}: {e}", entry.name))?;
+            continue;
+        }
+
+        let data = crush(entry, ratio)?;
+
+        // The EPUB format requires an uncompressed mimetype entry, and
+        // deflating already-compressed image data just burns CPU for no
+        // real size benefit.
+        let stored = entry.name.eq_ignore_ascii_case("mimetype") || entry.kind != Kind::Fixed;
+        let options = if stored {
+            entry.options.compression_method(CompressionMethod::Stored)
+        } else {
+            entry.options
+        };
+
+        writer
+            .start_file(&entry.name, options)
+            .map_err(|e| format!("failed to write entry {}: {e}", entry.name))?;
+        writer
+            .write_all(&data)
+            .map_err(|e| format!("failed to write entry {}: {e}", entry.name))?;
+    }
+
+    writer
+        .finish()
+        .map_err(|e| format!("failed to finalize the epub: {e}"))?;
+    Ok(())
+}
+
+/// Writes the crushed EPUB to a temporary file next to `output` and moves it
+/// into place only once it's complete, so a failure part-way through never
+/// leaves a truncated file behind - or, with --in-place, destroys the input.
+fn write_epub(entries: &[Entry], ratio: f64, output: &Path) -> Result<(), String> {
+    // Resolve symlinks so the file they point at is replaced, not the link.
+    let dest = fs::canonicalize(output).unwrap_or_else(|_| output.to_path_buf());
+    let mut tmp_name = dest
+        .file_name()
+        .ok_or_else(|| format!("{} is not a file path", output.display()))?
+        .to_os_string();
+    tmp_name.push(".tmp");
+    let tmp = dest.with_file_name(tmp_name);
+
+    let result = fs::File::create(&tmp)
+        .map_err(|e| format!("failed to create {}: {e}", tmp.display()))
+        .and_then(|file| write_entries(entries, ratio, file))
+        .and_then(|()| {
+            if let Ok(existing) = fs::metadata(&dest) {
+                let _ = fs::set_permissions(&tmp, existing.permissions());
+            }
+            fs::rename(&tmp, &dest)
+                .map_err(|e| format!("failed to write {}: {e}", output.display()))
+        });
+    if result.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    result
+}
+
+fn main() -> ExitCode {
+    common::run(env!("CARGO_PKG_NAME"), run)
+}
+
+fn run() -> common::Result {
     let args = Args::parse();
 
     let current_size = fs::metadata(&args.input)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", args.input.display()))
+        .map_err(|e| format!("failed to read {}: {e}", args.input.display()))?
         .len();
-
-    let target_bytes = parse_target_size(&args.target_size, current_size).unwrap_or_else(|e| {
-        eprintln!("{e}");
-        std::process::exit(1);
-    });
+    let target_bytes = parse_target_size(&args.target_size, current_size)?;
 
     if target_bytes >= current_size {
         writeln!(
@@ -260,9 +388,8 @@ fn main() {
             "target size ({}) is not smaller than the current size ({current_size} bytes); leaving {} untouched",
             args.target_size,
             args.input.display()
-        )
-        .unwrap_or_else(|e| write_failed(e));
-        return;
+        )?;
+        return Ok(());
     }
 
     let output_path = if args.in_place {
@@ -273,134 +400,15 @@ fn main() {
             .unwrap_or_else(|| default_output_path(&args.input))
     };
 
-    let file = fs::File::open(&args.input)
-        .unwrap_or_else(|e| panic!("failed to open {}: {e}", args.input.display()));
-    let mut archive = ZipArchive::new(file)
-        .unwrap_or_else(|e| panic!("failed to read {} as an epub: {e}", args.input.display()));
-
-    let mut entries = Vec::with_capacity(archive.len());
-    for i in 0..archive.len() {
-        let mut zf = archive
-            .by_index(i)
-            .unwrap_or_else(|e| panic!("failed to read entry {i}: {e}"));
-        let name = zf.name().to_string();
-        let is_dir = zf.is_dir();
-        let compressed_size = zf.compressed_size();
-        let options = zf.options();
-        let mut data = Vec::new();
-        if !is_dir {
-            zf.read_to_end(&mut data)
-                .unwrap_or_else(|e| panic!("failed to read {name}: {e}"));
-        }
-        entries.push(Entry {
-            name,
-            is_dir,
-            data,
-            options,
-            compressed_size,
-        });
-    }
-    drop(archive);
-
-    let classified: Vec<(Kind, Option<DynamicImage>)> = entries
-        .iter()
-        .map(|e| {
-            if e.is_dir {
-                (Kind::Fixed, None)
-            } else {
-                classify(&e.data)
-            }
-        })
-        .collect();
-
-    // `compressed_size` is what the *original* entries contribute to the
-    // current file size, so it's used to work out how many bytes are spent
-    // on things we won't touch. But once crushed, images are written back
-    // out uncompressed (see below), so their contribution to the *new*
-    // file size is their raw byte length - that's the right basis for
-    // sizing each image's target, not their incidental original zip
-    // compression (which can vary a lot and has nothing to do with how
-    // shrinkable the image itself is).
-    let modifiable_compressed_total: u64 = entries
-        .iter()
-        .zip(&classified)
-        .filter(|(_, (kind, _))| *kind != Kind::Fixed)
-        .map(|(e, _)| e.compressed_size)
-        .sum();
-    let modifiable_raw_total: u64 = entries
-        .iter()
-        .zip(&classified)
-        .filter(|(_, (kind, _))| *kind != Kind::Fixed)
-        .map(|(e, _)| e.data.len() as u64)
-        .sum();
-    let fixed_total = current_size.saturating_sub(modifiable_compressed_total);
-
-    if modifiable_raw_total == 0 {
+    let entries = read_entries(&args.input)?;
+    if entries.iter().all(|e| e.kind == Kind::Fixed) {
         eprintln!("warning: no JPEG or PNG images found to compress; output will be about the same size");
     }
-
-    let target_for_images = target_bytes.saturating_sub(fixed_total);
-    let ratio = if modifiable_raw_total == 0 {
-        1.0
-    } else {
-        (target_for_images as f64 / modifiable_raw_total as f64).clamp(0.02, 1.0)
-    };
-
-    // Below this, an image is already small enough that squeezing it
-    // further barely moves the total file size while risking visibly
-    // wrecking small icons/decorations - so just leave it alone.
-    const MIN_TARGET_BYTES: usize = 16 * 1024;
-
-    let out_file = fs::File::create(&output_path)
-        .unwrap_or_else(|e| panic!("failed to create {}: {e}", output_path.display()));
-    let mut writer = ZipWriter::new(out_file);
-
-    for (entry, (kind, img)) in entries.iter().zip(classified.iter()) {
-        if entry.is_dir {
-            writer
-                .add_directory(&entry.name, entry.options)
-                .unwrap_or_else(|e| panic!("failed to write directory {}: {e}", entry.name));
-            continue;
-        }
-
-        let should_shrink = *kind != Kind::Fixed && ratio < 0.98;
-        let target_for_this =
-            ((entry.data.len() as f64 * ratio).round() as usize).max(MIN_TARGET_BYTES);
-
-        let final_data = if should_shrink && target_for_this < entry.data.len() {
-            let img = img.as_ref().expect("classified image must be decoded");
-            match kind {
-                Kind::Jpeg => shrink_jpeg(img, target_for_this),
-                Kind::Png => shrink_png(img, target_for_this),
-                Kind::Fixed => unreachable!(),
-            }
-        } else {
-            entry.data.clone()
-        };
-
-        let mut options = entry.options;
-        if entry.name.eq_ignore_ascii_case("mimetype") {
-            options = options.compression_method(CompressionMethod::Stored);
-        } else if *kind != Kind::Fixed {
-            // Already-compressed image data; deflating it again just burns
-            // CPU for no real size benefit.
-            options = options.compression_method(CompressionMethod::Stored);
-        }
-
-        writer
-            .start_file(&entry.name, options)
-            .unwrap_or_else(|e| panic!("failed to write entry {}: {e}", entry.name));
-        writer
-            .write_all(&final_data)
-            .unwrap_or_else(|e| panic!("failed to write entry {}: {e}", entry.name));
-    }
-
-    writer
-        .finish()
-        .unwrap_or_else(|e| panic!("failed to finalize {}: {e}", output_path.display()));
+    let ratio = image_ratio(&entries, current_size, target_bytes);
+    write_epub(&entries, ratio, &output_path)?;
 
     let new_size = fs::metadata(&output_path)
-        .unwrap_or_else(|e| panic!("failed to read back {}: {e}", output_path.display()))
+        .map_err(|e| format!("failed to read back {}: {e}", output_path.display()))?
         .len();
 
     let pct = 100.0 - (new_size as f64 / current_size as f64 * 100.0);
@@ -408,8 +416,8 @@ fn main() {
         io::stdout(),
         "{}: {current_size} -> {new_size} bytes ({pct:.1}% smaller, target was {target_bytes} bytes)",
         output_path.display()
-    )
-    .unwrap_or_else(|e| write_failed(e));
+    )?;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -485,29 +493,71 @@ mod tests {
         );
     }
 
-    // -- classify ---------------------------------------------------------
+    // -- kind_of ----------------------------------------------------------
 
     #[test]
-    fn classifies_jpeg_bytes_as_jpeg() {
-        let data = encode_jpeg(&photo(64, 64), 80);
-        let (kind, img) = classify(&data);
-        assert_eq!(kind, Kind::Jpeg);
-        assert!(img.is_some());
+    fn jpeg_and_png_bytes_are_recognised_by_content() {
+        assert_eq!(kind_of(&encode_jpeg(&photo(64, 64), 80).unwrap()), Kind::Jpeg);
+        assert_eq!(kind_of(&encode_png(&photo(64, 64)).unwrap()), Kind::Png);
     }
 
     #[test]
-    fn classifies_png_bytes_as_png() {
-        let data = encode_png(&photo(64, 64));
-        let (kind, img) = classify(&data);
-        assert_eq!(kind, Kind::Png);
-        assert!(img.is_some());
+    fn non_image_bytes_are_fixed() {
+        assert_eq!(kind_of(b"<html><body>hello</body></html>"), Kind::Fixed);
+        assert_eq!(kind_of(b""), Kind::Fixed);
+    }
+
+    // -- image_ratio / crush ----------------------------------------------
+
+    fn entry(kind: Kind, data: Vec<u8>, compressed_size: u64) -> Entry {
+        Entry {
+            name: "x".to_string(),
+            is_dir: false,
+            data,
+            options: SimpleFileOptions::default(),
+            compressed_size,
+            kind,
+        }
     }
 
     #[test]
-    fn classifies_non_image_bytes_as_fixed() {
-        let (kind, img) = classify(b"<html><body>hello</body></html>");
-        assert_eq!(kind, Kind::Fixed);
-        assert!(img.is_none());
+    fn image_ratio_spends_the_whole_cut_on_the_images() {
+        // 1000 bytes on disk: 400 of text, 600 of image (800 raw).
+        let entries = [
+            entry(Kind::Fixed, vec![0; 900], 400),
+            entry(Kind::Jpeg, vec![0; 800], 600),
+        ];
+        // To reach 600, the images get 600 - 400 = 200 of their 800 raw bytes.
+        assert_eq!(image_ratio(&entries, 1000, 600), 0.25);
+    }
+
+    #[test]
+    fn image_ratio_is_clamped_and_is_one_without_images() {
+        let entries = [
+            entry(Kind::Fixed, vec![0; 900], 400),
+            entry(Kind::Png, vec![0; 800], 600),
+        ];
+        assert_eq!(image_ratio(&entries, 1000, 100), 0.02);
+        assert_eq!(image_ratio(&entries[..1], 1000, 100), 1.0);
+    }
+
+    #[test]
+    fn crush_leaves_fixed_small_and_undecodable_entries_alone() {
+        let text = entry(Kind::Fixed, vec![7; 100_000], 0);
+        assert!(matches!(crush(&text, 0.1), Ok(Cow::Borrowed(_))));
+
+        let icon = entry(Kind::Png, encode_png(&photo(16, 16)).unwrap(), 0);
+        assert!(matches!(crush(&icon, 0.1), Ok(Cow::Borrowed(_))));
+
+        let broken = entry(Kind::Jpeg, vec![7; 100_000], 0);
+        assert!(matches!(crush(&broken, 0.1), Ok(Cow::Borrowed(_))));
+    }
+
+    #[test]
+    fn crush_shrinks_a_large_image() {
+        let image = entry(Kind::Jpeg, encode_jpeg(&photo(800, 600), 92).unwrap(), 0);
+        let shrunk = crush(&image, 0.5).unwrap();
+        assert!(shrunk.len() <= image.data.len() / 2);
     }
 
     // -- shrink_jpeg / shrink_png ---------------------------------------
@@ -515,9 +565,9 @@ mod tests {
     #[test]
     fn shrink_jpeg_hits_a_moderate_target_via_quality_alone() {
         let img = photo(400, 300);
-        let original = encode_jpeg(&img, 95);
+        let original = encode_jpeg(&img, 95).unwrap();
         let target = original.len() / 3;
-        let shrunk = shrink_jpeg(&img, target);
+        let shrunk = shrink_jpeg(&img, target).unwrap();
         assert!(shrunk.len() <= target.max(1) || shrunk.len() < original.len());
         // Still a valid, decodable JPEG at the original resolution (quality
         // alone should be enough for a 3x cut on a small image).
@@ -528,8 +578,8 @@ mod tests {
     #[test]
     fn shrink_jpeg_downscales_when_quality_cannot_reach_a_tiny_target() {
         let img = photo(2000, 1500);
-        let shrunk = shrink_jpeg(&img, 4000);
-        assert!(shrunk.len() <= 4000 || shrunk.len() < encode_jpeg(&img, 92).len());
+        let shrunk = shrink_jpeg(&img, 4000).unwrap();
+        assert!(shrunk.len() <= 4000 || shrunk.len() < encode_jpeg(&img, 92).unwrap().len());
         let decoded = image::load_from_memory(&shrunk).unwrap();
         let (w, h) = decoded.dimensions();
         assert!(w < 2000 && h < 1500, "expected downscale, got {w}x{h}");
@@ -538,7 +588,7 @@ mod tests {
     #[test]
     fn shrink_jpeg_never_grows_the_image() {
         let img = photo(300, 200);
-        let shrunk = shrink_jpeg(&img, 1_000_000_000);
+        let shrunk = shrink_jpeg(&img, 1_000_000_000).unwrap();
         let decoded = image::load_from_memory(&shrunk).unwrap();
         let (w, h) = decoded.dimensions();
         assert!(w <= 300 && h <= 200);
@@ -547,9 +597,9 @@ mod tests {
     #[test]
     fn shrink_png_downscales_to_fit_a_small_target() {
         let img = photo(400, 300);
-        let full = encode_png(&img);
+        let full = encode_png(&img).unwrap();
         let target = full.len() / 4;
-        let shrunk = shrink_png(&img, target);
+        let shrunk = shrink_png(&img, target).unwrap();
         assert!(shrunk.len() <= target);
         let decoded = image::load_from_memory(&shrunk).unwrap();
         let (w, h) = decoded.dimensions();
@@ -559,8 +609,8 @@ mod tests {
     #[test]
     fn shrink_png_leaves_image_untouched_if_already_under_target() {
         let img = photo(50, 50);
-        let full = encode_png(&img);
-        let shrunk = shrink_png(&img, full.len() + 1000);
+        let full = encode_png(&img).unwrap();
+        let shrunk = shrink_png(&img, full.len() + 1000).unwrap();
         assert_eq!(shrunk, full);
     }
 }

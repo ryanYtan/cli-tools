@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::process::ExitCode;
 
 use clap::Parser;
 
@@ -76,22 +77,15 @@ fn format_human(bytes: u64) -> String {
     bytes.to_string()
 }
 
-/// Exits quietly when stdout is closed early (e.g. `pathsize | head`).
-fn write_failed(e: io::Error) -> ! {
-    if e.kind() == io::ErrorKind::BrokenPipe {
-        std::process::exit(0);
-    }
-    eprintln!("failed to write to stdout: {e}");
-    std::process::exit(1);
+fn main() -> ExitCode {
+    common::run(env!("CARGO_PKG_NAME"), run)
 }
 
-fn main() {
+fn run() -> common::Result {
     let args = Args::parse();
 
-    let bytes = size_of(&args.path).unwrap_or_else(|e| {
-        eprintln!("failed to read size of {}: {e}", args.path.display());
-        std::process::exit(1);
-    });
+    let bytes = size_of(&args.path)
+        .map_err(|e| format!("failed to read size of {}: {e}", args.path.display()))?;
 
     let output = if args.kilo {
         format_fixed(bytes, 1 << 10, "K")
@@ -107,7 +101,8 @@ fn main() {
         bytes.to_string()
     };
 
-    writeln!(io::stdout(), "{output}").unwrap_or_else(|e| write_failed(e));
+    writeln!(io::stdout(), "{output}")?;
+    Ok(())
 }
 
 #[cfg(test)]

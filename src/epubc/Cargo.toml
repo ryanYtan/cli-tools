@@ -4,9 +4,11 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap.workspace = true
+common.workspace = true
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
+testutil.workspace = true

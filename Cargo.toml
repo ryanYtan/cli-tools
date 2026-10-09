@@ -2,11 +2,13 @@
 resolver = "2"
 members = [
     "src/colsof",
+    "src/common",
     "src/dtail",
     "src/epubc",
     "src/guid",
     "src/mapit",
     "src/pathsize",
+    "src/testutil",
     "src/textsplit",
     "src/urandom",
     "src/zargs",
@@ -15,3 +17,9 @@ members = [
 [workspace.package]
 edition = "2024"
 version = "0.1.0"
+
+[workspace.dependencies]
+clap = { version = "4", features = ["derive"] }
+common = { path = "src/common" }
+tempfile = "3"
+testutil = { path = "src/testutil" }

@@ -1,17 +1,6 @@
-use std::process::Command;
+use testutil::Tool;
 
-fn run(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_guid"))
-        .args(args)
-        .output()
-        .expect("failed to run guid")
-}
-
-fn stdout(args: &[&str]) -> String {
-    let out = run(args);
-    assert!(out.status.success(), "guid {args:?} failed: {out:?}");
-    String::from_utf8(out.stdout).expect("stdout was not utf8")
-}
+const TOOL: Tool = Tool::new(env!("CARGO_BIN_EXE_guid"));
 
 /// Checks the shape of a v4 GUID: 8-4-4-4-12 hex groups, version nibble 4,
 /// and an RFC 4122 variant nibble (8/9/a/b).
@@ -44,7 +33,7 @@ fn is_valid_v4_guid(s: &str, uppercase: bool) -> bool {
 
 #[test]
 fn default_prints_one_valid_v4_guid() {
-    let out = stdout(&[]);
+    let out = TOOL.stdout(&[]);
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 1);
     assert!(is_valid_v4_guid(lines[0], false), "not a v4 guid: {}", lines[0]);
@@ -52,7 +41,7 @@ fn default_prints_one_valid_v4_guid() {
 
 #[test]
 fn count_prints_that_many_guids() {
-    let out = stdout(&["-c", "5"]);
+    let out = TOOL.stdout(&["-c", "5"]);
     let lines: Vec<&str> = out.lines().collect();
     assert_eq!(lines.len(), 5);
     for line in lines {
@@ -62,14 +51,14 @@ fn count_prints_that_many_guids() {
 
 #[test]
 fn empty_prints_the_nil_guid() {
-    let out = stdout(&["-e"]);
+    let out = TOOL.stdout(&["-e"]);
     assert_eq!(out.trim(), "00000000-0000-0000-0000-000000000000");
 }
 
 #[test]
 fn from_integer_encodes_the_value_into_the_guid() {
     // 0xDEADBEEF
-    let out = stdout(&["-i", "3735928559"]);
+    let out = TOOL.stdout(&["-i", "3735928559"]);
     assert_eq!(
         out.trim(),
         "00000000-0000-0000-0000-0000deadbeef"
@@ -78,24 +67,24 @@ fn from_integer_encodes_the_value_into_the_guid() {
 
 #[test]
 fn uppercase_flag_uppercases_the_output() {
-    let out = stdout(&["-i", "3735928559", "-u"]);
+    let out = TOOL.stdout(&["-i", "3735928559", "-u"]);
     assert_eq!(out.trim(), "00000000-0000-0000-0000-0000DEADBEEF");
 }
 
 #[test]
 fn lowercase_is_the_default() {
-    let out = stdout(&["-i", "3735928559", "-l"]);
+    let out = TOOL.stdout(&["-i", "3735928559", "-l"]);
     assert_eq!(out.trim(), "00000000-0000-0000-0000-0000deadbeef");
 }
 
 #[test]
 fn from_integer_and_empty_conflict() {
-    let out = run(&["-i", "1", "-e"]);
+    let out = TOOL.run(&["-i", "1", "-e"]);
     assert!(!out.status.success());
 }
 
 #[test]
 fn uppercase_and_lowercase_conflict() {
-    let out = run(&["-u", "-l"]);
+    let out = TOOL.run(&["-u", "-l"]);
     assert!(!out.status.success());
 }

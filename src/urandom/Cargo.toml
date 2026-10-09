@@ -4,5 +4,9 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap.workspace = true
+common.workspace = true
 getrandom = "0.4"
+
+[dev-dependencies]
+testutil.workspace = true

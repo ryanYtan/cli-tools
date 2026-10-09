@@ -5,4 +5,8 @@ version.workspace = true
 
 [dependencies]
 calamine = { version = "0.36", features = ["dates"] }
-clap = { version = "4", features = ["derive"] }
+clap.workspace = true
+common.workspace = true
+
+[dev-dependencies]
+testutil.workspace = true

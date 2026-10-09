@@ -4,7 +4,9 @@ edition.workspace = true
 version.workspace = true
 
 [dependencies]
-clap = { version = "4", features = ["derive"] }
+clap.workspace = true
+common.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
+testutil.workspace = true

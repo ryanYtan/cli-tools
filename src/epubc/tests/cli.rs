@@ -1,11 +1,13 @@
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 
 use image::codecs::jpeg::JpegEncoder;
 use image::{ImageFormat, RgbImage};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use testutil::Tool;
+
+const TOOL: Tool = Tool::new(env!("CARGO_BIN_EXE_epubc"));
 
 /// A large, high-frequency (so it doesn't trivially compress away) photo.
 fn photo_jpeg_bytes(w: u32, h: u32, quality: u8) -> Vec<u8> {
@@ -60,13 +62,6 @@ fn build_epub(path: &Path, n_photos: usize) {
     z.finish().unwrap();
 }
 
-fn run(args: &[&str]) -> std::process::Output {
-    Command::new(env!("CARGO_BIN_EXE_epubc"))
-        .args(args)
-        .output()
-        .expect("failed to run epubc")
-}
-
 #[test]
 fn crushes_an_epub_below_its_target_size() {
     let dir = tempfile::tempdir().unwrap();
@@ -75,7 +70,7 @@ fn crushes_an_epub_below_its_target_size() {
     let original_size = std::fs::metadata(&input).unwrap().len();
 
     let output = dir.path().join("out.epub");
-    let result = run(&[
+    let result = TOOL.run(&[
         input.to_str().unwrap(),
         "-t",
         "30%",
@@ -101,7 +96,7 @@ fn output_is_a_valid_zip_with_mimetype_first_and_stored() {
     build_epub(&input, 2);
     let output = dir.path().join("out.epub");
 
-    let result = run(&[
+    let result = TOOL.run(&[
         input.to_str().unwrap(),
         "-t",
         "20%",
@@ -142,7 +137,7 @@ fn text_content_is_preserved_unchanged() {
     build_epub(&input, 1);
     let output = dir.path().join("out.epub");
 
-    let result = run(&[
+    let result = TOOL.run(&[
         input.to_str().unwrap(),
         "-t",
         "10%",
@@ -169,7 +164,7 @@ fn absolute_target_larger_than_current_size_is_a_no_op() {
     build_epub(&input, 1);
     let output = dir.path().join("out.epub");
 
-    let result = run(&[
+    let result = TOOL.run(&[
         input.to_str().unwrap(),
         "-t",
         "100MB",
@@ -187,11 +182,47 @@ fn in_place_overwrites_the_input_file() {
     build_epub(&input, 2);
     let original_size = std::fs::metadata(&input).unwrap().len();
 
-    let result = run(&[input.to_str().unwrap(), "-t", "30%", "--in-place"]);
+    let result = TOOL.run(&[input.to_str().unwrap(), "-t", "30%", "--in-place"]);
     assert!(result.status.success(), "{result:?}");
 
     let new_size = std::fs::metadata(&input).unwrap().len();
     assert!(new_size < original_size);
+}
+
+#[test]
+fn no_temporary_file_is_left_behind() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("book.epub");
+    build_epub(&input, 2);
+
+    let result = TOOL.run(&[input.to_str().unwrap(), "-t", "30%", "--in-place"]);
+    assert!(result.status.success(), "{result:?}");
+    // A write that can't complete must not leave anything behind either.
+    let result = TOOL.run(&[input.to_str().unwrap(), "-t", "30%", "-o", "/no/such/dir/out.epub"]);
+    assert!(!result.status.success());
+
+    let names: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().file_name())
+        .collect();
+    assert_eq!(names, ["book.epub"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn in_place_through_a_symlink_replaces_the_file_it_points_at() {
+    let dir = tempfile::tempdir().unwrap();
+    let input = dir.path().join("book.epub");
+    build_epub(&input, 2);
+    let original_size = std::fs::metadata(&input).unwrap().len();
+    let link = dir.path().join("link.epub");
+    std::os::unix::fs::symlink(&input, &link).unwrap();
+
+    let result = TOOL.run(&[link.to_str().unwrap(), "-t", "30%", "--in-place"]);
+    assert!(result.status.success(), "{result:?}");
+
+    assert!(std::fs::symlink_metadata(&link).unwrap().is_symlink());
+    assert!(std::fs::metadata(&input).unwrap().len() < original_size);
 }
 
 #[test]
@@ -200,7 +231,7 @@ fn output_and_in_place_conflict() {
     let input = dir.path().join("book.epub");
     build_epub(&input, 1);
 
-    let result = run(&[
+    let result = TOOL.run(&[
         input.to_str().unwrap(),
         "-t",
         "10%",
@@ -217,7 +248,7 @@ fn default_output_path_is_input_stem_with_crushed_suffix() {
     let input = dir.path().join("mybook.epub");
     build_epub(&input, 1);
 
-    let result = run(&[input.to_str().unwrap(), "-t", "10%"]);
+    let result = TOOL.run(&[input.to_str().unwrap(), "-t", "10%"]);
     assert!(result.status.success(), "{result:?}");
     assert!(dir.path().join("mybook.crushed.epub").exists());
 }
@@ -228,6 +259,6 @@ fn rejects_an_invalid_target_size() {
     let input = dir.path().join("book.epub");
     build_epub(&input, 1);
 
-    let result = run(&[input.to_str().unwrap(), "-t", "not-a-size"]);
+    let result = TOOL.run(&[input.to_str().unwrap(), "-t", "not-a-size"]);
     assert!(!result.status.success());
 }

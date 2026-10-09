@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::io::{self, Write};
+use std::process::ExitCode;
 
 use calamine::{open_workbook_auto, Data, DataType, Reader};
 use clap::Parser;
@@ -82,38 +83,34 @@ fn cell_is_truthy(cell: &Data) -> bool {
     }
 }
 
-/// Exits quietly when stdout is closed early (e.g. `colsof | head`).
-fn write_failed(e: io::Error) -> ! {
-    if e.kind() == io::ErrorKind::BrokenPipe {
-        std::process::exit(0);
-    }
-    eprintln!("failed to write to stdout: {e}");
-    std::process::exit(1);
+fn main() -> ExitCode {
+    common::run(env!("CARGO_PKG_NAME"), run)
 }
 
-fn main() {
+fn run() -> common::Result {
     let args = Args::parse();
 
     let allowed_columns: BTreeSet<u32> = args.columns.iter().copied().collect();
 
-    let mut workbook =
-        open_workbook_auto(&args.file).unwrap_or_else(|e| panic!("failed to open {}: {e}", args.file));
+    let mut workbook = open_workbook_auto(&args.file)
+        .map_err(|e| format!("failed to open {}: {e}", args.file))?;
 
     let range = if args.sheet_name.chars().all(|c| c.is_ascii_digit()) && !args.sheet_name.is_empty()
     {
-        let sheet_index: usize = args.sheet_name.parse().unwrap();
+        let no_sheet = || format!("no sheet at index {}", args.sheet_name);
+        let sheet_index: usize = args.sheet_name.parse().map_err(|_| no_sheet())?;
         workbook
             .worksheet_range_at(sheet_index)
-            .unwrap_or_else(|| panic!("no sheet at index {sheet_index}"))
-            .unwrap_or_else(|e| panic!("failed to read sheet {sheet_index}: {e}"))
+            .ok_or_else(no_sheet)?
+            .map_err(|e| format!("failed to read sheet {sheet_index}: {e}"))?
     } else {
         workbook
             .worksheet_range(&args.sheet_name)
-            .unwrap_or_else(|e| panic!("failed to read sheet {}: {e}", args.sheet_name))
+            .map_err(|e| format!("failed to read sheet {}: {e}", args.sheet_name))?
     };
 
     let Some((start_row_idx, start_col_idx)) = range.start() else {
-        return;
+        return Ok(());
     };
     let _ = start_row_idx;
 
@@ -148,9 +145,10 @@ fn main() {
                 values.push(args.default_value.clone());
             }
         }
-        writeln!(out, "{}", values.join(&args.delimiter)).unwrap_or_else(|e| write_failed(e));
+        writeln!(out, "{}", values.join(&args.delimiter))?;
         first = false;
     }
+    Ok(())
 }
 
 #[cfg(test)]

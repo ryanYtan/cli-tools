@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::process::ExitCode;
 
 use clap::Parser;
 use uuid::Uuid;
@@ -28,16 +29,11 @@ struct Args {
     lowercase: bool,
 }
 
-/// Exits quietly when stdout is closed early (e.g. `guid | head`).
-fn write_failed(e: io::Error) -> ! {
-    if e.kind() == io::ErrorKind::BrokenPipe {
-        std::process::exit(0);
-    }
-    eprintln!("failed to write to stdout: {e}");
-    std::process::exit(1);
+fn main() -> ExitCode {
+    common::run(env!("CARGO_PKG_NAME"), run)
 }
 
-fn main() {
+fn run() -> common::Result {
     let args = Args::parse();
     let mut out = io::stdout().lock();
 
@@ -50,11 +46,11 @@ fn main() {
             Uuid::new_v4()
         };
 
-        let written = if args.uppercase {
-            writeln!(out, "{}", guid.hyphenated().to_string().to_uppercase())
+        if args.uppercase {
+            writeln!(out, "{}", guid.hyphenated().to_string().to_uppercase())?;
         } else {
-            writeln!(out, "{guid}")
-        };
-        written.unwrap_or_else(|e| write_failed(e));
+            writeln!(out, "{guid}")?;
+        }
     }
+    Ok(())
 }

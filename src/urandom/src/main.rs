@@ -1,4 +1,5 @@
 use std::io::{self, Write};
+use std::process::ExitCode;
 
 use clap::Parser;
 use clap::builder::NonEmptyStringValueParser;
@@ -27,14 +28,14 @@ struct Args {
     bytes: bool,
 }
 
-fn random_bytes(buf: &mut [u8]) {
-    getrandom::fill(buf).expect("failed to read random bytes");
+fn random_bytes(buf: &mut [u8]) -> Result<(), String> {
+    getrandom::fill(buf).map_err(|e| format!("failed to read random bytes: {e}"))
 }
 
 /// Picks `size` characters uniformly from `charset`. Random values past the
 /// last whole multiple of the charset's length are redrawn, since reducing
 /// them modulo the length would favour the charset's first characters.
-fn random_string(charset: &[char], size: usize) -> String {
+fn random_string(charset: &[char], size: usize) -> Result<String, String> {
     let n = charset.len() as u64;
     let limit = (1u64 << 32) / n * n;
 
@@ -42,7 +43,7 @@ fn random_string(charset: &[char], size: usize) -> String {
     let mut picked = 0;
     let mut buf = [0u8; 256];
     while picked < size {
-        random_bytes(&mut buf);
+        random_bytes(&mut buf)?;
         for chunk in buf.chunks_exact(4) {
             let v = u64::from(u32::from_le_bytes(chunk.try_into().unwrap()));
             if v >= limit {
@@ -55,37 +56,31 @@ fn random_string(charset: &[char], size: usize) -> String {
             }
         }
     }
-    s
+    Ok(s)
 }
 
-/// Exits quietly when stdout is closed early (e.g. `urandom | head`).
-fn write_failed(e: io::Error) -> ! {
-    if e.kind() == io::ErrorKind::BrokenPipe {
-        std::process::exit(0);
-    }
-    eprintln!("failed to write to stdout: {e}");
-    std::process::exit(1);
+fn main() -> ExitCode {
+    common::run(env!("CARGO_PKG_NAME"), run)
 }
 
-fn main() {
+fn run() -> common::Result {
     let args = Args::parse();
     let mut out = io::stdout().lock();
 
-    let written = if args.hex || args.bytes {
+    if args.hex || args.bytes {
         let mut rands = vec![0u8; args.size];
-        random_bytes(&mut rands);
+        random_bytes(&mut rands)?;
         if args.hex {
-            writeln!(out, "{}", hex_encode(&rands))
+            writeln!(out, "{}", hex_encode(&rands))?;
         } else {
-            out.write_all(&rands)
+            out.write_all(&rands)?;
         }
     } else {
         let charset: Vec<char> = args.charset.chars().collect();
-        writeln!(out, "{}", random_string(&charset, args.size))
-    };
-    written
-        .and_then(|_| out.flush())
-        .unwrap_or_else(|e| write_failed(e));
+        writeln!(out, "{}", random_string(&charset, args.size)?)?;
+    }
+    out.flush()?;
+    Ok(())
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -99,15 +94,15 @@ mod tests {
     #[test]
     fn random_string_has_the_requested_length() {
         let charset: Vec<char> = "abc".chars().collect();
-        assert_eq!(random_string(&charset, 0), "");
-        assert_eq!(random_string(&charset, 1000).chars().count(), 1000);
+        assert_eq!(random_string(&charset, 0).unwrap(), "");
+        assert_eq!(random_string(&charset, 1000).unwrap().chars().count(), 1000);
     }
 
     #[test]
     fn random_string_reaches_every_character_of_a_large_charset() {
         // 300 characters: more than a single random byte could index.
         let charset: Vec<char> = (0..300).map(|i| char::from_u32(0x4e00 + i).unwrap()).collect();
-        let s = random_string(&charset, 30_000);
+        let s = random_string(&charset, 30_000).unwrap();
         assert!(charset.iter().all(|c| s.contains(*c)));
     }
 
@@ -115,7 +110,7 @@ mod tests {
     fn random_string_draws_each_character_about_equally_often() {
         // 3 doesn't divide 256, so a plain `byte % 3` would skew towards 'a'.
         let charset: Vec<char> = "abc".chars().collect();
-        let s = random_string(&charset, 300_000);
+        let s = random_string(&charset, 300_000).unwrap();
         for c in &charset {
             let count = s.chars().filter(|x| x == c).count();
             assert!((98_000..102_000).contains(&count), "{c}: {count}");

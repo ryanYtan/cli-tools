@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::io::{self, BufRead, Write};
+use std::process::ExitCode;
 
 use clap::Parser;
 
@@ -37,30 +38,26 @@ fn build_mapping(contents: &str, delimiter: &str) -> HashMap<String, String> {
     m
 }
 
-/// Exits quietly when stdout is closed early (e.g. `mapit | head`).
-fn write_failed(e: io::Error) -> ! {
-    if e.kind() == io::ErrorKind::BrokenPipe {
-        std::process::exit(0);
-    }
-    eprintln!("failed to write to stdout: {e}");
-    std::process::exit(1);
+fn main() -> ExitCode {
+    common::run(env!("CARGO_PKG_NAME"), run)
 }
 
-fn main() {
+fn run() -> common::Result {
     let args = Args::parse();
 
     let contents = fs::read_to_string(&args.input_mapping)
-        .unwrap_or_else(|e| panic!("failed to read {}: {e}", args.input_mapping));
+        .map_err(|e| format!("failed to read {}: {e}", args.input_mapping))?;
     let m = build_mapping(&contents, &args.map_delimiter);
 
     let stdin = io::stdin();
     let mut out = io::stdout().lock();
     for line in stdin.lock().lines() {
-        let line = line.expect("failed to read from stdin");
+        let line = line.map_err(|e| format!("failed to read from stdin: {e}"))?;
         let line = line.trim();
         let value = m.get(line).unwrap_or(&args.default_value);
-        writeln!(out, "{value}").unwrap_or_else(|e| write_failed(e));
+        writeln!(out, "{value}")?;
     }
+    Ok(())
 }
 
 #[cfg(test)]

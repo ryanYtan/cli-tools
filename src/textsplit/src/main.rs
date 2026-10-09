@@ -1,4 +1,5 @@
 use std::io::{self, BufRead, Write};
+use std::process::ExitCode;
 
 use clap::Parser;
 
@@ -28,26 +29,22 @@ fn split_line<'a>(line: &'a str, delimiter: &str, ignore_empty: bool, trim: bool
         .collect()
 }
 
-/// Exits quietly when stdout is closed early (e.g. `textsplit | head`).
-fn write_failed(e: io::Error) -> ! {
-    if e.kind() == io::ErrorKind::BrokenPipe {
-        std::process::exit(0);
-    }
-    eprintln!("failed to write to stdout: {e}");
-    std::process::exit(1);
+fn main() -> ExitCode {
+    common::run(env!("CARGO_PKG_NAME"), run)
 }
 
-fn main() {
+fn run() -> common::Result {
     let args = Args::parse();
 
     let stdin = io::stdin();
     let mut out = io::stdout().lock();
     for line in stdin.lock().lines() {
-        let line = line.expect("failed to read from stdin");
+        let line = line.map_err(|e| format!("failed to read from stdin: {e}"))?;
         for part in split_line(&line, &args.delimiter, args.ignore_empty, !args.no_trim) {
-            writeln!(out, "{part}").unwrap_or_else(|e| write_failed(e));
+            writeln!(out, "{part}")?;
         }
     }
+    Ok(())
 }
 
 #[cfg(test)]

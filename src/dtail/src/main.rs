@@ -336,6 +336,13 @@ impl Tailer {
             Some(s) => History::Since(s.clone()),
             None => History::Tail(self.args.tail),
         };
+        // Size the label column for the whole batch up front: the first
+        // tails start printing while the later ones are still being spawned.
+        for c in &initial {
+            self.printer
+                .width
+                .fetch_max(c.label.chars().count(), Ordering::Relaxed);
+        }
         for c in initial {
             self.start(c, history.clone())?;
         }

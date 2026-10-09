@@ -112,3 +112,26 @@ fn missing_sheet_name_fails() {
         .unwrap();
     assert!(!out.status.success());
 }
+
+#[test]
+fn no_skip_header_prints_the_first_row_too() {
+    let path = fixture();
+    let with_header = stdout(&[path.to_str().unwrap(), "-i", "Sheet1", "-c", "1", "-W"]);
+    let without = stdout(&[path.to_str().unwrap(), "-i", "Sheet1", "-c", "1", "-w"]);
+    assert_eq!(without, "Alice\nBob\nCarol\n");
+    assert_eq!(with_header.lines().count(), 4);
+    assert!(with_header.ends_with(&without));
+}
+
+#[test]
+fn invalid_column_fails_cleanly() {
+    let path = fixture();
+    for col in ["-", "A1", "ZZZZZZZZZZ"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_colsof"))
+            .args([path.to_str().unwrap(), "-i", "Sheet1", "-c", col])
+            .output()
+            .unwrap();
+        assert_eq!(out.status.code(), Some(2), "column {col:?}");
+        assert!(!String::from_utf8_lossy(&out.stderr).contains("panicked"));
+    }
+}

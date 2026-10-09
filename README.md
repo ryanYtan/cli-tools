@@ -26,7 +26,7 @@ Options:
   -i, --from-integer <FROM_INTEGER>  Generate a GUID from a 128-bit integer
   -e, --empty                        Generate an empty GUID (all bits 0)
   -u, --uppercase                    Use uppercase letters
-  -l, --lowercase                    Use lowercase letters
+  -l, --lowercase                    Use lowercase letters (default)
   -h, --help                         Print help
 ```
 
@@ -145,7 +145,8 @@ Arguments:
 
 Options:
   -i, --sheet-name <SHEET_NAME>        Name or index of the sheet to read
-  -w, --skip-header                    Skip the first row of the sheet
+  -w, --skip-header                    Skip the first row of the sheet (default)
+  -W, --no-skip-header                 Print the first row of the sheet too
   -d, --delimiter <DELIMITER>          Delimiter to use between columns [default: " "]
   -t, --trim                           Trim whitespace from columns
   -c, --columns <COLUMNS>...           Column to read (either as index or letter) [default: 0]

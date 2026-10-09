@@ -67,3 +67,10 @@ fn zero_size_produces_empty_output() {
     let out = stdout(&["-i", "0"]);
     assert_eq!(out.trim_end_matches('\n'), "");
 }
+
+#[test]
+fn empty_charset_fails_cleanly() {
+    let out = run(&["-c", ""]);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!String::from_utf8_lossy(&out.stderr).contains("panicked"));
+}

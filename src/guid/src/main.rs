@@ -1,3 +1,5 @@
+use std::io::{self, Write};
+
 use clap::Parser;
 use uuid::Uuid;
 
@@ -21,13 +23,23 @@ struct Args {
     #[arg(short, long, conflicts_with = "lowercase")]
     uppercase: bool,
 
-    /// Use lowercase letters
+    /// Use lowercase letters (default)
     #[arg(short, long)]
     lowercase: bool,
 }
 
+/// Exits quietly when stdout is closed early (e.g. `guid | head`).
+fn write_failed(e: io::Error) -> ! {
+    if e.kind() == io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+    eprintln!("failed to write to stdout: {e}");
+    std::process::exit(1);
+}
+
 fn main() {
     let args = Args::parse();
+    let mut out = io::stdout().lock();
 
     for _ in 0..args.count {
         let guid = if let Some(from_integer) = args.from_integer {
@@ -38,10 +50,11 @@ fn main() {
             Uuid::new_v4()
         };
 
-        if args.uppercase {
-            println!("{}", guid.hyphenated().to_string().to_uppercase());
+        let written = if args.uppercase {
+            writeln!(out, "{}", guid.hyphenated().to_string().to_uppercase())
         } else {
-            println!("{guid}");
-        }
+            writeln!(out, "{guid}")
+        };
+        written.unwrap_or_else(|e| write_failed(e));
     }
 }

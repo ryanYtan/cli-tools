@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
@@ -75,6 +76,15 @@ fn format_human(bytes: u64) -> String {
     bytes.to_string()
 }
 
+/// Exits quietly when stdout is closed early (e.g. `pathsize | head`).
+fn write_failed(e: io::Error) -> ! {
+    if e.kind() == io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+    eprintln!("failed to write to stdout: {e}");
+    std::process::exit(1);
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -97,7 +107,7 @@ fn main() {
         bytes.to_string()
     };
 
-    println!("{output}");
+    writeln!(io::stdout(), "{output}").unwrap_or_else(|e| write_failed(e));
 }
 
 #[cfg(test)]

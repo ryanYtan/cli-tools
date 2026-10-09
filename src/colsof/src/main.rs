@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::io::{self, Write};
 
 use calamine::{open_workbook_auto, Data, DataType, Reader};
 use clap::Parser;
@@ -14,9 +15,13 @@ struct Args {
     #[arg(short = 'i', long, required = true)]
     sheet_name: String,
 
-    /// Skip the first row of the sheet
-    #[arg(short = 'w', long, default_value_t = true)]
+    /// Skip the first row of the sheet (default)
+    #[arg(short = 'w', long, overrides_with = "no_skip_header")]
     skip_header: bool,
+
+    /// Print the first row of the sheet too
+    #[arg(short = 'W', long, overrides_with = "skip_header")]
+    no_skip_header: bool,
 
     /// Delimiter to use between columns
     #[arg(short, long, default_value = " ")]
@@ -27,23 +32,30 @@ struct Args {
     trim: bool,
 
     /// Column to read (either as index or letter)
-    #[arg(short, long, num_args = 1.., default_values_t = ["0".to_string()])]
-    columns: Vec<String>,
+    #[arg(short, long, num_args = 1.., default_value = "0", value_parser = col_to_index)]
+    columns: Vec<u32>,
 
     /// Default value to use for empty cells
     #[arg(short = 'f', long, default_value = "<EMPTY>")]
     default_value: String,
 }
 
-fn col_to_index(col: &str) -> u32 {
-    if col.chars().all(|c| c.is_ascii_digit()) && !col.is_empty() {
-        return col.parse().expect("column index out of range");
+fn col_to_index(col: &str) -> Result<u32, String> {
+    let out_of_range = || format!("column {col} is out of range");
+    if !col.is_empty() && col.chars().all(|c| c.is_ascii_digit()) {
+        return col.parse().map_err(|_| out_of_range());
+    }
+    if col.is_empty() || !col.chars().all(|c| c.is_ascii_alphabetic()) {
+        return Err(format!("{col:?} is not a column index or letter"));
     }
     let mut index: u32 = 0;
     for c in col.to_ascii_uppercase().chars() {
-        index = index * 26 + (c as u32 - 'A' as u32) + 1;
+        index = index
+            .checked_mul(26)
+            .and_then(|i| i.checked_add(c as u32 - 'A' as u32 + 1))
+            .ok_or_else(out_of_range)?;
     }
-    index
+    Ok(index)
 }
 
 fn cell_to_string(cell: &Data) -> String {
@@ -70,12 +82,19 @@ fn cell_is_truthy(cell: &Data) -> bool {
     }
 }
 
+/// Exits quietly when stdout is closed early (e.g. `colsof | head`).
+fn write_failed(e: io::Error) -> ! {
+    if e.kind() == io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+    eprintln!("failed to write to stdout: {e}");
+    std::process::exit(1);
+}
+
 fn main() {
     let args = Args::parse();
 
-    let mut converted_columns: Vec<u32> = args.columns.iter().map(|c| col_to_index(c)).collect();
-    converted_columns.sort_unstable();
-    let allowed_columns: BTreeSet<u32> = converted_columns.into_iter().collect();
+    let allowed_columns: BTreeSet<u32> = args.columns.iter().copied().collect();
 
     let mut workbook =
         open_workbook_auto(&args.file).unwrap_or_else(|e| panic!("failed to open {}: {e}", args.file));
@@ -99,13 +118,14 @@ fn main() {
     let _ = start_row_idx;
 
     let mut rows = range.rows();
-    if args.skip_header {
+    if args.skip_header || !args.no_skip_header {
         rows.next();
     }
 
     let mut final_columns: BTreeSet<u32> = BTreeSet::new();
     let mut first = true;
     let mut values: Vec<String> = Vec::new();
+    let mut out = io::stdout().lock();
 
     for row in rows {
         values.clear();
@@ -128,7 +148,7 @@ fn main() {
                 values.push(args.default_value.clone());
             }
         }
-        println!("{}", values.join(&args.delimiter));
+        writeln!(out, "{}", values.join(&args.delimiter)).unwrap_or_else(|e| write_failed(e));
         first = false;
     }
 }
@@ -139,22 +159,32 @@ mod tests {
 
     #[test]
     fn col_to_index_parses_plain_numbers_as_is() {
-        assert_eq!(col_to_index("0"), 0);
-        assert_eq!(col_to_index("5"), 5);
+        assert_eq!(col_to_index("0"), Ok(0));
+        assert_eq!(col_to_index("5"), Ok(5));
     }
 
     #[test]
     fn col_to_index_converts_single_letters() {
-        assert_eq!(col_to_index("A"), 1);
-        assert_eq!(col_to_index("a"), 1);
-        assert_eq!(col_to_index("Z"), 26);
+        assert_eq!(col_to_index("A"), Ok(1));
+        assert_eq!(col_to_index("a"), Ok(1));
+        assert_eq!(col_to_index("Z"), Ok(26));
     }
 
     #[test]
     fn col_to_index_converts_multi_letter_columns() {
-        assert_eq!(col_to_index("AA"), 27);
-        assert_eq!(col_to_index("AZ"), 52);
-        assert_eq!(col_to_index("BA"), 53);
+        assert_eq!(col_to_index("AA"), Ok(27));
+        assert_eq!(col_to_index("AZ"), Ok(52));
+        assert_eq!(col_to_index("BA"), Ok(53));
+    }
+
+    #[test]
+    fn col_to_index_rejects_anything_else() {
+        assert!(col_to_index("").is_err());
+        assert!(col_to_index("-").is_err());
+        assert!(col_to_index("A1").is_err());
+        assert!(col_to_index("é").is_err());
+        assert!(col_to_index("99999999999").is_err());
+        assert!(col_to_index("ZZZZZZZZZZ").is_err());
     }
 
     #[test]

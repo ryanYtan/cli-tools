@@ -1,4 +1,4 @@
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 
 use clap::Parser;
 
@@ -28,14 +28,24 @@ fn split_line<'a>(line: &'a str, delimiter: &str, ignore_empty: bool, trim: bool
         .collect()
 }
 
+/// Exits quietly when stdout is closed early (e.g. `textsplit | head`).
+fn write_failed(e: io::Error) -> ! {
+    if e.kind() == io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+    eprintln!("failed to write to stdout: {e}");
+    std::process::exit(1);
+}
+
 fn main() {
     let args = Args::parse();
 
     let stdin = io::stdin();
+    let mut out = io::stdout().lock();
     for line in stdin.lock().lines() {
         let line = line.expect("failed to read from stdin");
         for part in split_line(&line, &args.delimiter, args.ignore_empty, !args.no_trim) {
-            println!("{part}");
+            writeln!(out, "{part}").unwrap_or_else(|e| write_failed(e));
         }
     }
 }

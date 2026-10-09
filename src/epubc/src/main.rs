@@ -1,5 +1,5 @@
 use std::fs;
-use std::io::{Cursor, Read, Write};
+use std::io::{self, Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
@@ -233,6 +233,15 @@ fn classify(data: &[u8]) -> (Kind, Option<DynamicImage>) {
     }
 }
 
+/// Exits quietly when stdout is closed early (e.g. `epubc | head`).
+fn write_failed(e: io::Error) -> ! {
+    if e.kind() == io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+    eprintln!("failed to write to stdout: {e}");
+    std::process::exit(1);
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -246,11 +255,13 @@ fn main() {
     });
 
     if target_bytes >= current_size {
-        println!(
+        writeln!(
+            io::stdout(),
             "target size ({}) is not smaller than the current size ({current_size} bytes); leaving {} untouched",
             args.target_size,
             args.input.display()
-        );
+        )
+        .unwrap_or_else(|e| write_failed(e));
         return;
     }
 
@@ -393,10 +404,12 @@ fn main() {
         .len();
 
     let pct = 100.0 - (new_size as f64 / current_size as f64 * 100.0);
-    println!(
+    writeln!(
+        io::stdout(),
         "{}: {current_size} -> {new_size} bytes ({pct:.1}% smaller, target was {target_bytes} bytes)",
         output_path.display()
-    );
+    )
+    .unwrap_or_else(|e| write_failed(e));
 }
 
 #[cfg(test)]

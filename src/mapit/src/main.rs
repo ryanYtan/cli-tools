@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::fs;
-use std::io::{self, BufRead};
+use std::io::{self, BufRead, Write};
 
 use clap::Parser;
 
@@ -37,6 +37,15 @@ fn build_mapping(contents: &str, delimiter: &str) -> HashMap<String, String> {
     m
 }
 
+/// Exits quietly when stdout is closed early (e.g. `mapit | head`).
+fn write_failed(e: io::Error) -> ! {
+    if e.kind() == io::ErrorKind::BrokenPipe {
+        std::process::exit(0);
+    }
+    eprintln!("failed to write to stdout: {e}");
+    std::process::exit(1);
+}
+
 fn main() {
     let args = Args::parse();
 
@@ -45,13 +54,12 @@ fn main() {
     let m = build_mapping(&contents, &args.map_delimiter);
 
     let stdin = io::stdin();
+    let mut out = io::stdout().lock();
     for line in stdin.lock().lines() {
         let line = line.expect("failed to read from stdin");
         let line = line.trim();
-        match m.get(line) {
-            Some(value) => println!("{value}"),
-            None => println!("{}", args.default_value),
-        }
+        let value = m.get(line).unwrap_or(&args.default_value);
+        writeln!(out, "{value}").unwrap_or_else(|e| write_failed(e));
     }
 }
 

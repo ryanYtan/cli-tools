@@ -19,7 +19,6 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 /// PNG) - just enough to hit the target. Image formats are never
 /// converted, so the OPF manifest's declared media types stay valid.
 #[derive(Parser)]
-#[command(about = "Crushes an EPUB's images down until the file hits a target size")]
 struct Args {
     /// EPUB file to crush
     input: PathBuf,
@@ -421,15 +420,15 @@ fn run() -> common::Result {
 }
 
 #[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+mod support;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     fn photo(w: u32, h: u32) -> DynamicImage {
-        // High-frequency-ish content so JPEG/PNG encoders can't trivially
-        // flatten it to (near) nothing regardless of quality/scale.
-        DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
-            image::Rgb([(x * 3) as u8, (y * 5) as u8, (x ^ y) as u8])
-        }))
+        DynamicImage::ImageRgb8(support::photo(w, h))
     }
 
     // -- parse_target_size --------------------------------------------

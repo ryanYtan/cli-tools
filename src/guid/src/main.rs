@@ -6,7 +6,6 @@ use uuid::Uuid;
 
 /// Generates GUIDs (v4)
 #[derive(Parser)]
-#[command(about = "Generates GUIDs (v4)")]
 struct Args {
     /// Number of GUIDs to generate
     #[arg(short, long, default_value_t = 1)]

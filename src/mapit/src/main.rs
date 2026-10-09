@@ -7,7 +7,6 @@ use clap::Parser;
 
 /// Maps lines from stdin using a mapping file
 #[derive(Parser)]
-#[command(about = "Maps lines from stdin using a mapping file")]
 struct Args {
     /// File containing the mapping
     #[arg(short = 'i', long)]

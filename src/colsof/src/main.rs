@@ -7,7 +7,6 @@ use clap::Parser;
 
 /// Prints the columns of an Excel sheet
 #[derive(Parser)]
-#[command(about = "Prints the columns of an Excel sheet")]
 struct Args {
     /// Excel file to read
     file: String,
@@ -41,9 +40,13 @@ struct Args {
     default_value: String,
 }
 
+fn is_number(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+}
+
 fn col_to_index(col: &str) -> Result<u32, String> {
     let out_of_range = || format!("column {col} is out of range");
-    if !col.is_empty() && col.chars().all(|c| c.is_ascii_digit()) {
+    if is_number(col) {
         return col.parse().map_err(|_| out_of_range());
     }
     if col.is_empty() || !col.chars().all(|c| c.is_ascii_alphabetic()) {
@@ -83,6 +86,42 @@ fn cell_is_truthy(cell: &Data) -> bool {
     }
 }
 
+/// The 1-based column number of each cell in a row of a range that starts at
+/// column index `start_col`.
+fn numbered(row: &[Data], start_col: u32) -> impl Iterator<Item = (u32, &Data)> {
+    (start_col + 1..).zip(row)
+}
+
+/// The requested columns that have a value in the first row printed. Only
+/// these are printed, for every row.
+fn columns_present(first_row: &[Data], start_col: u32, requested: &BTreeSet<u32>) -> BTreeSet<u32> {
+    numbered(first_row, start_col)
+        .filter(|(col, cell)| requested.contains(col) && !cell.is_empty())
+        .map(|(col, _)| col)
+        .collect()
+}
+
+/// A row's values for the given columns, with `default_value` standing in
+/// for cells that are empty or otherwise falsy.
+fn row_values(
+    row: &[Data],
+    start_col: u32,
+    columns: &BTreeSet<u32>,
+    trim: bool,
+    default_value: &str,
+) -> Vec<String> {
+    numbered(row, start_col)
+        .filter(|(col, _)| columns.contains(col))
+        .map(|(_, cell)| {
+            if !cell_is_truthy(cell) {
+                return default_value.to_string();
+            }
+            let s = cell_to_string(cell);
+            if trim { s.trim().to_string() } else { s }
+        })
+        .collect()
+}
+
 fn main() -> ExitCode {
     common::run(env!("CARGO_PKG_NAME"), run)
 }
@@ -90,13 +129,12 @@ fn main() -> ExitCode {
 fn run() -> common::Result {
     let args = Args::parse();
 
-    let allowed_columns: BTreeSet<u32> = args.columns.iter().copied().collect();
+    let requested_columns: BTreeSet<u32> = args.columns.iter().copied().collect();
 
     let mut workbook = open_workbook_auto(&args.file)
         .map_err(|e| format!("failed to open {}: {e}", args.file))?;
 
-    let range = if args.sheet_name.chars().all(|c| c.is_ascii_digit()) && !args.sheet_name.is_empty()
-    {
+    let range = if is_number(&args.sheet_name) {
         let no_sheet = || format!("no sheet at index {}", args.sheet_name);
         let sheet_index: usize = args.sheet_name.parse().map_err(|_| no_sheet())?;
         workbook
@@ -109,44 +147,23 @@ fn run() -> common::Result {
             .map_err(|e| format!("failed to read sheet {}: {e}", args.sheet_name))?
     };
 
-    let Some((start_row_idx, start_col_idx)) = range.start() else {
+    let Some((_, start_col)) = range.start() else {
         return Ok(());
     };
-    let _ = start_row_idx;
 
-    let mut rows = range.rows();
-    if args.skip_header || !args.no_skip_header {
+    let mut rows = range.rows().peekable();
+    if !args.no_skip_header {
         rows.next();
     }
+    let Some(first_row) = rows.peek() else {
+        return Ok(());
+    };
+    let columns = columns_present(first_row, start_col, &requested_columns);
 
-    let mut final_columns: BTreeSet<u32> = BTreeSet::new();
-    let mut first = true;
-    let mut values: Vec<String> = Vec::new();
     let mut out = io::stdout().lock();
-
     for row in rows {
-        values.clear();
-        for (j, cell) in row.iter().enumerate() {
-            let col = start_col_idx + j as u32 + 1;
-
-            if first {
-                if !allowed_columns.contains(&col) || cell.is_empty() {
-                    continue;
-                }
-                final_columns.insert(col);
-            } else if !final_columns.contains(&col) {
-                continue;
-            }
-
-            if cell_is_truthy(cell) {
-                let s = cell_to_string(cell);
-                values.push(if args.trim { s.trim().to_string() } else { s });
-            } else {
-                values.push(args.default_value.clone());
-            }
-        }
+        let values = row_values(row, start_col, &columns, args.trim, &args.default_value);
         writeln!(out, "{}", values.join(&args.delimiter))?;
-        first = false;
     }
     Ok(())
 }
@@ -209,5 +226,48 @@ mod tests {
         assert!(cell_is_truthy(&Data::Bool(true)));
         assert!(!cell_is_truthy(&Data::String(String::new())));
         assert!(cell_is_truthy(&Data::String("x".to_string())));
+    }
+
+    fn text(s: &str) -> Data {
+        Data::String(s.to_string())
+    }
+
+    fn set(cols: &[u32]) -> BTreeSet<u32> {
+        cols.iter().copied().collect()
+    }
+
+    #[test]
+    fn columns_present_keeps_requested_columns_with_a_value_in_the_first_row() {
+        let row = [text("a"), Data::Empty, text("c"), text("d")];
+        assert_eq!(columns_present(&row, 0, &set(&[1, 2, 3, 9])), set(&[1, 3]));
+    }
+
+    #[test]
+    fn columns_are_numbered_from_where_the_range_starts() {
+        // A range starting at column C: its first cell is column 3.
+        let row = [text("c"), text("d")];
+        assert_eq!(columns_present(&row, 2, &set(&[1, 3, 4])), set(&[3, 4]));
+        assert_eq!(row_values(&row, 2, &set(&[4]), false, "-"), ["d"]);
+    }
+
+    #[test]
+    fn row_values_substitutes_the_default_for_falsy_cells() {
+        let row = [text("a"), Data::Empty, Data::Int(0), Data::Int(7)];
+        assert_eq!(
+            row_values(&row, 0, &set(&[1, 2, 3, 4]), false, "N/A"),
+            ["a", "N/A", "N/A", "7"]
+        );
+    }
+
+    #[test]
+    fn row_values_trims_only_when_asked() {
+        let row = [text("  a "), text("b")];
+        assert_eq!(row_values(&row, 0, &set(&[1]), false, ""), ["  a "]);
+        assert_eq!(row_values(&row, 0, &set(&[1]), true, ""), ["a"]);
+    }
+
+    #[test]
+    fn row_values_skips_cells_past_a_short_row() {
+        assert!(row_values(&[text("a")], 0, &set(&[2]), false, "").is_empty());
     }
 }

@@ -9,7 +9,6 @@ const DEFAULT_CHARSET: &str =
 
 /// Generate random data
 #[derive(Parser)]
-#[command(about = "Generate random data")]
 struct Args {
     /// Number of bytes to generate
     #[arg(short = 'i', long, default_value_t = 32)]

@@ -5,6 +5,7 @@ version.workspace = true
 
 [dependencies]
 clap.workspace = true
+common.workspace = true
 ctrlc = { version = "3", features = ["termination"] }
 regex = "1"
 

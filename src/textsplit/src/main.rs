@@ -5,7 +5,6 @@ use clap::Parser;
 
 /// Splits text into lines based on a delimiter
 #[derive(Parser)]
-#[command(about = "Splits text into lines based on a delimiter")]
 struct Args {
     /// Delimiter to split on
     #[arg(short, long, default_value = ",")]

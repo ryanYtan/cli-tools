@@ -7,10 +7,7 @@ use clap::Parser;
 
 /// Prints the size of a file, or the total size of a directory's contents
 #[derive(Parser)]
-#[command(
-    about = "Prints the size of a file, or the total size of a directory's contents",
-    disable_help_flag = true
-)]
+#[command(disable_help_flag = true)]
 struct Args {
     /// Path to measure
     #[arg(default_value = ".")]
@@ -62,13 +59,15 @@ fn format_fixed(bytes: u64, unit_size: u64, suffix: &str) -> String {
     format!("{:.1}{suffix}", bytes as f64 / unit_size as f64)
 }
 
+/// The binary units, largest first.
+const UNITS: [(u64, &str); 4] = [
+    (1u64 << 40, "T"),
+    (1u64 << 30, "G"),
+    (1u64 << 20, "M"),
+    (1u64 << 10, "K"),
+];
+
 fn format_human(bytes: u64) -> String {
-    const UNITS: [(u64, &str); 4] = [
-        (1u64 << 40, "T"),
-        (1u64 << 30, "G"),
-        (1u64 << 20, "M"),
-        (1u64 << 10, "K"),
-    ];
     for (unit_size, suffix) in UNITS {
         if bytes >= unit_size {
             return format_fixed(bytes, unit_size, suffix);
@@ -87,14 +86,12 @@ fn run() -> common::Result {
     let bytes = size_of(&args.path)
         .map_err(|e| format!("failed to read size of {}: {e}", args.path.display()))?;
 
-    let output = if args.kilo {
-        format_fixed(bytes, 1 << 10, "K")
-    } else if args.mega {
-        format_fixed(bytes, 1 << 20, "M")
-    } else if args.giga {
-        format_fixed(bytes, 1 << 30, "G")
-    } else if args.tera {
-        format_fixed(bytes, 1 << 40, "T")
+    // In the order of `UNITS`.
+    let unit_flags = [args.tera, args.giga, args.mega, args.kilo];
+    let fixed_unit = UNITS.into_iter().zip(unit_flags).find(|(_, set)| *set);
+
+    let output = if let Some(((unit_size, suffix), _)) = fixed_unit {
+        format_fixed(bytes, unit_size, suffix)
     } else if args.human_readable {
         format_human(bytes)
     } else {

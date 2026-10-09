@@ -65,9 +65,6 @@ fn parse_fmt(s: &str) -> Result<Vec<Token>, String> {
 /// A simpler xargs. Use positional arguments in the command with {0}, {1}
 /// e.g. `echo "a b c" | zargs -- echo "{1} {0} {2}"`
 #[derive(Parser)]
-#[command(
-    about = "A simpler xargs. Use positional arguments in the command with {0}, {1} e.g. `echo \"a b c\" | zargs -- echo \"{1} {0} {2}\"`"
-)]
 struct Args {
     /// Command to run
     #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]

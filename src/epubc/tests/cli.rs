@@ -2,16 +2,17 @@ use std::io::Write;
 use std::path::Path;
 
 use image::codecs::jpeg::JpegEncoder;
-use image::{ImageFormat, RgbImage};
+use image::ImageFormat;
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 use testutil::Tool;
 
+mod support;
+
 const TOOL: Tool = Tool::new(env!("CARGO_BIN_EXE_epubc"));
 
-/// A large, high-frequency (so it doesn't trivially compress away) photo.
 fn photo_jpeg_bytes(w: u32, h: u32, quality: u8) -> Vec<u8> {
-    let img = RgbImage::from_fn(w, h, |x, y| image::Rgb([(x * 3) as u8, (y * 5) as u8, (x ^ y) as u8]));
+    let img = support::photo(w, h);
     let mut buf = Vec::new();
     JpegEncoder::new_with_quality(&mut buf, quality)
         .encode_image(&img)

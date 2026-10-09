@@ -6,8 +6,12 @@
 
 set -euo pipefail
 
-TOOLS=(colsof dtail epubc guid mapit pathsize textsplit urandom zargs)
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+# Every workspace crate that builds a binary.
+TOOLS=()
+for main in "$SCRIPT_DIR"/src/*/src/main.rs; do
+    TOOLS+=("$(basename "${main%/src/main.rs}")")
+done
 INSTALL_DIR="/usr/local/bin"
 
 info()  { printf '\033[1;34m==>\033[0m %s\n' "$1"; }

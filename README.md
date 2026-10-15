@@ -14,12 +14,22 @@ This builds each tool in release mode and installs the binaries to
 using `sudo` if needed to write there. The script offers to install `rustup`
 first if `cargo` isn't found.
 
-## `guid`
-Generates GUIDs
-```
-usage: guid [OPTIONS]
+## Development
 
+Each tool is a crate under `src/`; any crate there with a `src/main.rs` is
+picked up by `install.sh`. Shared error handling lives in `src/common` and CLI
+test helpers in `src/testutil`. Run the tests with:
+
+```
+cargo test --workspace
+```
+
+## `guid`
+Generates GUIDs (v4), lowercase unless `-u` is given.
+```
 Generates GUIDs (v4)
+
+Usage: guid [OPTIONS]
 
 Options:
   -c, --count <COUNT>                Number of GUIDs to generate [default: 1]
@@ -31,26 +41,29 @@ Options:
 ```
 
 ## `urandom`
-Generates a random string
+Generates a random string of `--size` characters drawn uniformly from
+`--charset`, or random bytes printed as hex (`-x`) or written raw (`-b`).
 ```
-usage: urandom [OPTIONS]
-
 Generate random data
+
+Usage: urandom [OPTIONS]
 
 Options:
   -i, --size <SIZE>        Number of bytes to generate [default: 32]
   -c, --charset <CHARSET>  Character set to use [default: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]
   -x, --hex                Output as HEX
-  -b, --bytes              Output as bytes
-  -h, --help                Print help
+  -b, --bytes              Output as raw bytes
+  -h, --help               Print help
 ```
 
 ## `mapit`
-Maps lines from stdin using a mapping file
+Maps each line from stdin to a value from a mapping file of `key:value`
+lines. Keys, values and input lines are trimmed; lines with no mapping print
+the `--default-value`.
 ```
-usage: mapit [OPTIONS] --input-mapping <INPUT_MAPPING>
-
 Maps lines from stdin using a mapping file
+
+Usage: mapit [OPTIONS] --input-mapping <INPUT_MAPPING>
 
 Options:
   -i, --input-mapping <INPUT_MAPPING>  File containing the mapping
@@ -60,11 +73,12 @@ Options:
 ```
 
 ## `textsplit`
-Splits text into lines based on a delimiter
+Splits each line from stdin on a delimiter and prints each part on its own
+line. Parts are trimmed unless `-T` is given.
 ```
-usage: textsplit [OPTIONS]
-
 Splits text into lines based on a delimiter
+
+Usage: textsplit [OPTIONS]
 
 Options:
   -d, --delimiter <DELIMITER>  Delimiter to split on [default: ,]
@@ -74,10 +88,14 @@ Options:
 ```
 
 ## `zargs`
-A simpler `xargs`. Use positional arguments in the command with `{0}`, `{1}`,
-etc, e.g. `echo "a b c" | zargs -- echo "{1} {0} {2}"`.
+A simpler `xargs`: runs the command once per line from stdin. Each line is
+split on spaces, and `{0}`, `{1}`, etc. in the command are replaced with the
+parts (`{{` and `}}` give literal braces), e.g.
+`echo "a b c" | zargs -- echo "{1} {0} {2}"` prints `b a c`.
 ```
-usage: zargs <COMMAND>...
+A simpler xargs. Use positional arguments in the command with {0}, {1} e.g. `echo "a b c" | zargs -- echo "{1} {0} {2}"`
+
+Usage: zargs <COMMAND>...
 
 Arguments:
   <COMMAND>...  Command to run
@@ -93,32 +111,33 @@ e-readers. Text, fonts, and markup are left untouched; only JPEG quality
 and, if that alone isn't enough, image resolution (for both JPEG and PNG)
 are reduced. Image formats are never converted, so the OPF manifest's
 declared media types stay valid. If an absolute target size isn't smaller
-than the current file, nothing is done.
+than the current file, nothing is done. The output is only written once it's
+complete, so a failed run never leaves a broken file - even with `--in-place`.
 ```
-usage: epubc [OPTIONS] --target-size <TARGET_SIZE> <INPUT>
-
 Crushes an EPUB's images down until the file hits a target size
+
+Usage: epubc [OPTIONS] --target-size <TARGET_SIZE> <INPUT>
 
 Arguments:
   <INPUT>  EPUB file to crush
 
 Options:
-  -t, --target-size <TARGET_SIZE>  Target size, as a percentage of the current size (e.g. "30%") or an absolute size (e.g. "10MB", "500KB", "1.5GB")
+  -t, --target-size <TARGET_SIZE>  Target size, as a percentage of the current size (e.g. "30%") or an absolute size (e.g. "10MB", "500KB", "1.5GB"). If this is an absolute size that's not smaller than the current file, nothing is done
   -o, --output <OUTPUT>            Output file (default: <input-stem>.crushed.epub next to the input)
       --in-place                   Overwrite the input file instead of writing a new one
-  -h, --help                       Print help
+  -h, --help                       Print help (see more with '--help')
 ```
 Example: `epubc book.epub --target-size 30%` or `epubc book.epub --target-size 10MB`.
 
 ## `pathsize`
 Prints the size of a file, or the total size of a directory's contents
-(recursively). Defaults to bytes; unit flags follow standard Unix
-conventions (`-k`/`-m`/`-g`/`-t` for a fixed unit, `-h` to auto-scale like
-`du -h`/`ls -lh`), printed as e.g. `4.0K`, `2.9M`, `1.2G`.
+(recursively, without following symlinks). Defaults to bytes; unit flags
+follow standard Unix conventions (`-k`/`-m`/`-g`/`-t` for a fixed unit, `-h`
+to auto-scale like `du -h`/`ls -lh`), printed as e.g. `4.0K`, `2.9M`, `1.2G`.
 ```
-usage: pathsize [OPTIONS] [PATH]
-
 Prints the size of a file, or the total size of a directory's contents
+
+Usage: pathsize [OPTIONS] [PATH]
 
 Arguments:
   [PATH]  Path to measure [default: .]
@@ -134,11 +153,15 @@ Options:
 ```
 
 ## `colsof`
-Prints the columns of an Excel sheet
+Prints columns of an Excel sheet, one row per line. Columns are given as
+1-based indexes or letters (`-c 1 3` or `-c A C`); only those with a value in
+the first printed row are included, and empty cells in later rows print the
+`--default-value`. The header row is skipped unless `-W` is given. Note that
+`-c` defaults to `0`, which matches no column.
 ```
-usage: colsof [OPTIONS] --sheet-name <SHEET_NAME> <FILE>
-
 Prints the columns of an Excel sheet
+
+Usage: colsof [OPTIONS] --sheet-name <SHEET_NAME> <FILE>
 
 Arguments:
   <FILE>  Excel file to read
@@ -164,9 +187,9 @@ restart or are recreated later: new ones are tailed from their first line, and
 restarted ones carry on where they stopped. Uses the `docker` CLI, so the
 active Docker context is respected.
 ```
-usage: dtail [OPTIONS] [PATTERNS]...
-
 Tails logs from all running Docker containers matching any pattern, like kubetail
+
+Usage: dtail [OPTIONS] [PATTERNS]...
 
 Arguments:
   [PATTERNS]...  Regexes to match containers against (any match is tailed)

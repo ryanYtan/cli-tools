@@ -14,7 +14,7 @@ use zip::{CompressionMethod, ZipArchive, ZipWriter};
 /// Crushes an EPUB's images down until the file hits a target size.
 ///
 /// Most of an EPUB's size usually comes from its images, so this leaves
-/// text, fonts and markup untouched and only reduces image quality/
+/// text, fonts and markup untouched and only reduces image quality and
 /// dimensions (JPEG quality and, if needed, resolution for both JPEG and
 /// PNG) - just enough to hit the target. Image formats are never
 /// converted, so the OPF manifest's declared media types stay valid.

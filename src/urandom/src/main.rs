@@ -22,7 +22,7 @@ struct Args {
     #[arg(short = 'x', long, conflicts_with = "bytes")]
     hex: bool,
 
-    /// Output as a bytes
+    /// Output as raw bytes
     #[arg(short = 'b', long)]
     bytes: bool,
 }

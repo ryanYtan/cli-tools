@@ -10,7 +10,7 @@ const DEFAULT_CHARSET: &str =
 /// Generate random data
 #[derive(Parser)]
 struct Args {
-    /// Number of bytes to generate
+    /// Number of characters to generate (bytes with --hex or --bytes)
     #[arg(short = 'i', long, default_value_t = 32)]
     size: usize,
 

@@ -49,7 +49,7 @@ Generate random data
 Usage: urandom [OPTIONS]
 
 Options:
-  -i, --size <SIZE>        Number of bytes to generate [default: 32]
+  -i, --size <SIZE>        Number of characters to generate (bytes with --hex or --bytes) [default: 32]
   -c, --charset <CHARSET>  Character set to use [default: abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789]
   -x, --hex                Output as HEX
   -b, --bytes              Output as raw bytes
